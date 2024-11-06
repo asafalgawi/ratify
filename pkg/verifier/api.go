@@ -33,7 +33,7 @@ type ReferenceVerifier interface {
 	Type() string
 
 	// CanVerify returns if the verifier can verify the given reference
-	CanVerify(ctx context.Context, referenceDescriptor ocispecs.ReferenceDescriptor) bool
+	CanVerify(ctx context.Context, subjectReference common.Reference, referenceDescriptor ocispecs.ReferenceDescriptor) bool
 
 	// Verify verifies the given reference of a subject and returns the result of verification
 	Verify(ctx context.Context,

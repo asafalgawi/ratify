@@ -24,13 +24,14 @@ import (
 )
 
 const (
-	SpecVersion      string = "0.1.0"
-	Version          string = "version"
-	Name             string = "name"
-	Type             string = "type"
-	ArtifactTypes    string = "artifactTypes"
-	NestedReferences string = "nestedReferences"
-	Source           string = "source"
+	SpecVersion                string = "0.1.0"
+	Version                    string = "version"
+	Name                       string = "name"
+	Type                       string = "type"
+	ArtifactTypes              string = "artifactTypes"
+	NestedReferences           string = "nestedReferences"
+	Source                     string = "source"
+	MaxVerificationsPerSubject string = "maxVerificationsPerSubject"
 )
 
 const (

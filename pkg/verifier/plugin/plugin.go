@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -31,18 +32,20 @@ import (
 	"github.com/ratify-project/ratify/pkg/verifier"
 	"github.com/ratify-project/ratify/pkg/verifier/config"
 	"github.com/ratify-project/ratify/pkg/verifier/types"
+	"github.com/ratify-project/ratify/pkg/verifier/verificationcounters"
 )
 
 // VerifierPlugin describes a verifier that is implemented by invoking the plugins
 type VerifierPlugin struct {
-	name             string
-	verifierType     string
-	artifactTypes    []string
-	nestedReferences []string
-	version          string
-	path             []string
-	rawConfig        config.VerifierConfig
-	executor         pluginCommon.Executor
+	name                       string
+	verifierType               string
+	artifactTypes              []string
+	nestedReferences           []string
+	version                    string
+	path                       []string
+	rawConfig                  config.VerifierConfig
+	executor                   pluginCommon.Executor
+	maxVerificationsPerSubject int
 }
 
 // NewVerifier creates a new verifier from the given configuration
@@ -70,24 +73,37 @@ func NewVerifier(version string, verifierConfig config.VerifierConfig, pluginPat
 		artifactTypes = append(artifactTypes, "*")
 	}
 
+	maxVerificationsPerSubject := math.MaxInt32
+	if maxVerifications, ok := verifierConfig[types.MaxVerificationsPerSubject]; ok {
+		maxVerificationsPerSubject = maxVerifications.(int)
+	}
+
 	return &VerifierPlugin{
-		name:             fmt.Sprintf("%s", verifierName),
-		verifierType:     verifierType,
-		version:          version,
-		path:             pluginPaths,
-		rawConfig:        verifierConfig,
-		artifactTypes:    artifactTypes,
-		nestedReferences: nestedReferences,
-		executor:         &pluginCommon.DefaultExecutor{Stderr: os.Stderr},
+		name:                       fmt.Sprintf("%s", verifierName),
+		verifierType:               verifierType,
+		version:                    version,
+		path:                       pluginPaths,
+		rawConfig:                  verifierConfig,
+		artifactTypes:              artifactTypes,
+		nestedReferences:           nestedReferences,
+		executor:                   &pluginCommon.DefaultExecutor{Stderr: os.Stderr},
+		maxVerificationsPerSubject: maxVerificationsPerSubject,
 	}, nil
 }
 
-func (vp *VerifierPlugin) CanVerify(_ context.Context, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
+func (vp *VerifierPlugin) CanVerify(ctx context.Context, subjectReference common.Reference, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
+	verificationCounter := verificationcounters.GetFromContext(ctx, vp.name)
+	if verificationCounter != nil && verificationCounter.Get(subjectReference.String()) >= vp.maxVerificationsPerSubject {
+		return false
+	}
+
 	for _, at := range vp.artifactTypes {
 		if at == "*" || at == referenceDescriptor.ArtifactType {
 			return true
 		}
 	}
+
+	verificationCounter.Increment(subjectReference.String())
 	return false
 }
 

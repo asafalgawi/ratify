@@ -18,9 +18,11 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
+	imagespecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/ratify-project/ratify/errors"
 	"github.com/ratify-project/ratify/internal/logger"
 	"github.com/ratify-project/ratify/pkg/common"
@@ -94,6 +96,67 @@ func (executor Executor) verifySubjectInternal(ctx context.Context, verifyParame
 	return types.VerifyResult{IsSuccess: overallVerifySuccess, VerifierReports: verifierReports}, nil
 }
 
+func (executor Executor) getAllReferrersFromStore(ctx context.Context, referrerStore referrerstore.ReferrerStore, subjectReference common.Reference, artifactTypes []string, subjectDesc *ocispecs.SubjectDescriptor) ([]ocispecs.ReferenceDescriptor, error) {
+	var referrers []ocispecs.ReferenceDescriptor
+	var continuationToken string
+	var mu sync.Mutex
+
+	for {
+		referrersResult, err := referrerStore.ListReferrers(ctx, subjectReference, artifactTypes, continuationToken, subjectDesc)
+		if err != nil {
+			return referrers, errors.ErrorCodeListReferrersFailure.NewError(errors.ReferrerStore, referrerStore.Name(), errors.EmptyLink, err, nil, errors.HideStackTrace)
+		} else {
+			mu.Lock()
+			defer mu.Unlock()
+			referrers = append(referrers, referrersResult.Referrers...)
+		}
+
+		continuationToken = referrersResult.NextToken
+		if continuationToken == "" {
+			break
+		}
+
+	}
+
+	return referrers, nil
+}
+
+func (executor Executor) sortInPlaceReferrersByCreatedAnnotation(ctx context.Context, referrers []ocispecs.ReferenceDescriptor) {
+	// Sort the referrers by created annotation
+	comperator := func(left, right ocispecs.ReferenceDescriptor) int {
+		leftCreatedString, ok := left.Annotations[imagespecv1.AnnotationCreated]
+		if !ok {
+			return -1
+		}
+		rightCreatedString, ok := right.Annotations[imagespecv1.AnnotationCreated]
+		if !ok {
+			return 1
+		}
+		leftCreated, err := time.Parse(time.RFC3339, leftCreatedString)
+		if err != nil {
+			return -1
+		}
+		rightCreated, err := time.Parse(time.RFC3339, rightCreatedString)
+		if err != nil {
+			return 1
+		}
+		return leftCreated.Compare(rightCreated)
+	}
+
+	slices.SortFunc(referrers, comperator)
+}
+
+func (executor Executor) getSortedReferrerList(ctx context.Context, referrerStore referrerstore.ReferrerStore, subjectReference common.Reference, artifactTypes []string, subjectDesc *ocispecs.SubjectDescriptor) ([]ocispecs.ReferenceDescriptor, error) {
+
+	referrers, err := executor.getAllReferrersFromStore(ctx, referrerStore, subjectReference, artifactTypes, subjectDesc)
+	if err != nil {
+		return nil, err
+	}
+
+	executor.sortInPlaceReferrersByCreatedAnnotation(ctx, referrers)
+	return referrers, nil
+}
+
 // verifySubjectInternalWithoutDecision verifies the subject and returns result
 // without making decisions on the result.
 func (executor Executor) verifySubjectInternalWithoutDecision(ctx context.Context, verifyParameters e.VerifyParameters) ([]interface{}, error) {
@@ -118,42 +181,71 @@ func (executor Executor) verifySubjectInternalWithoutDecision(ctx context.Contex
 	for _, referrerStore := range executor.ReferrerStores {
 		referrerStore := referrerStore
 		eg.Go(func() error {
-			var continuationToken string
+			// var continuationToken string
 			innerGroup, innerErrCtx := errgroup.WithContext(errCtx)
-			for {
-				referrersResult, err := referrerStore.ListReferrers(errCtx, subjectReference, verifyParameters.ReferenceTypes, continuationToken, desc)
-				if err != nil {
-					return errors.ErrorCodeListReferrersFailure.NewError(errors.ReferrerStore, referrerStore.Name(), errors.EmptyLink, err, nil, errors.HideStackTrace)
-				}
-				continuationToken = referrersResult.NextToken
-				for _, reference := range referrersResult.Referrers {
-					if !executor.PolicyEnforcer.VerifyNeeded(innerErrCtx, subjectReference, reference) {
-						continue
-					}
-					reference := reference
-					innerGroup.Go(func() error {
-						if executor.PolicyEnforcer.GetPolicyType(ctx) == pt.RegoPolicy {
-							verifyResult, err := executor.verifyReferenceForRegoPolicy(innerErrCtx, subjectReference, reference, referrerStore)
-							if err != nil {
-								logger.GetLogger(ctx, logOpt).Errorf("error while verifying reference %+v, err: %v", reference, err)
-								return err
-							}
-							mu.Lock() // locks the verifierReports List for write safety
-							defer mu.Unlock()
-							verifierReports = append(verifierReports, verifyResult)
-						} else {
-							verifyResult := executor.verifyReferenceForJSONPolicy(innerErrCtx, subjectReference, reference, referrerStore)
-							mu.Lock() // locks the verifierReports List for write safety
-							defer mu.Unlock()
-							verifierReports = append(verifierReports, verifyResult.VerifierReports...)
-						}
-						return nil
-					})
-				}
-				if continuationToken == "" {
-					break
-				}
+			references, err := executor.getSortedReferrerList(ctx, referrerStore, subjectReference, verifyParameters.ReferenceTypes, desc)
+			if err != nil {
+				return errors.ErrorCodeListReferrersFailure.NewError(errors.ReferrerStore, referrerStore.Name(), errors.EmptyLink, err, nil, errors.HideStackTrace)
 			}
+			for _, reference := range references {
+				if !executor.PolicyEnforcer.VerifyNeeded(innerErrCtx, subjectReference, reference) {
+					continue
+				}
+				reference := reference
+				innerGroup.Go(func() error {
+					if executor.PolicyEnforcer.GetPolicyType(ctx) == pt.RegoPolicy {
+						verifyResult, err := executor.verifyReferenceForRegoPolicy(innerErrCtx, subjectReference, reference, referrerStore)
+						if err != nil {
+							logger.GetLogger(ctx, logOpt).Errorf("error while verifying reference %+v, err: %v", reference, err)
+							return err
+						}
+						mu.Lock() // locks the verifierReports List for write safety
+						defer mu.Unlock()
+						verifierReports = append(verifierReports, verifyResult)
+					} else {
+						verifyResult := executor.verifyReferenceForJSONPolicy(innerErrCtx, subjectReference, reference, referrerStore)
+						mu.Lock() // locks the verifierReports List for write safety
+						defer mu.Unlock()
+						verifierReports = append(verifierReports, verifyResult.VerifierReports...)
+					}
+					return nil
+				})
+			}
+
+			// for {
+			// 	referrersResult, err := referrerStore.ListReferrers(errCtx, subjectReference, verifyParameters.ReferenceTypes, continuationToken, desc)
+			// 	if err != nil {
+			// 		return errors.ErrorCodeListReferrersFailure.NewError(errors.ReferrerStore, referrerStore.Name(), errors.EmptyLink, err, nil, errors.HideStackTrace)
+			// 	}
+			// 	continuationToken = referrersResult.NextToken
+			// 	for _, reference := range referrersResult.Referrers {
+			// 		if !executor.PolicyEnforcer.VerifyNeeded(innerErrCtx, subjectReference, reference) {
+			// 			continue
+			// 		}
+			// 		reference := reference
+			// 		innerGroup.Go(func() error {
+			// 			if executor.PolicyEnforcer.GetPolicyType(ctx) == pt.RegoPolicy {
+			// 				verifyResult, err := executor.verifyReferenceForRegoPolicy(innerErrCtx, subjectReference, reference, referrerStore)
+			// 				if err != nil {
+			// 					logger.GetLogger(ctx, logOpt).Errorf("error while verifying reference %+v, err: %v", reference, err)
+			// 					return err
+			// 				}
+			// 				mu.Lock() // locks the verifierReports List for write safety
+			// 				defer mu.Unlock()
+			// 				verifierReports = append(verifierReports, verifyResult)
+			// 			} else {
+			// 				verifyResult := executor.verifyReferenceForJSONPolicy(innerErrCtx, subjectReference, reference, referrerStore)
+			// 				mu.Lock() // locks the verifierReports List for write safety
+			// 				defer mu.Unlock()
+			// 				verifierReports = append(verifierReports, verifyResult.VerifierReports...)
+			// 			}
+			// 			return nil
+			// 		})
+			// 	}
+			// 	if continuationToken == "" {
+			// 		break
+			// 	}
+			// }
 			return innerGroup.Wait()
 		})
 	}
@@ -172,7 +264,7 @@ func (executor Executor) verifyReferenceForJSONPolicy(ctx context.Context, subje
 	var isSuccess = true
 
 	for _, verifier := range executor.Verifiers {
-		if verifier.CanVerify(ctx, referenceDesc) {
+		if verifier.CanVerify(ctx, subjectRef, referenceDesc) {
 			verifierStartTime := time.Now()
 			verifyResult, err := verifier.Verify(ctx, subjectRef, referenceDesc, referrerStore)
 			if err != nil {
@@ -215,7 +307,7 @@ func (executor Executor) verifyReferenceForRegoPolicy(ctx context.Context, subje
 	})
 
 	for _, verifier := range executor.Verifiers {
-		if !verifier.CanVerify(ctx, referenceDesc) {
+		if !verifier.CanVerify(ctx, subjectRef, referenceDesc) {
 			continue
 		}
 		verifier := verifier

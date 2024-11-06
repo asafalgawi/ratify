@@ -126,7 +126,7 @@ func (v *notationPluginVerifier) Type() string {
 	return v.verifierType
 }
 
-func (v *notationPluginVerifier) CanVerify(_ context.Context, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
+func (v *notationPluginVerifier) CanVerify(_ context.Context, _ common.Reference, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
 	for _, at := range v.artifactTypes {
 		if at == "*" || at == referenceDescriptor.ArtifactType {
 			return true

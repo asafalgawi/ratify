@@ -93,6 +93,8 @@ func (server *Server) verify(ctx context.Context, w http.ResponseWriter, r *http
 				returnItem.Error = err.Error()
 				return
 			}
+
+			ctx = ctxUtils.InitContextWithVerificationCounters(ctx)
 			ctx = ctxUtils.SetContextWithNamespace(ctx, requestKey.Namespace)
 
 			if err := server.validateComponents(ctx, verifyComponents); err != nil {

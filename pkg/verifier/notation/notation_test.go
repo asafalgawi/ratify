@@ -202,7 +202,7 @@ func TestCanVerify(t *testing.T) {
 				ArtifactType: tt.referenceArtifact,
 			}
 
-			got := v.CanVerify(context.Background(), desc)
+			got := v.CanVerify(context.Background(), common.Reference{}, desc)
 			if got != tt.expect {
 				t.Fatalf("Expect: %v, got: %v", tt.expect, got)
 			}

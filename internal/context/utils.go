@@ -22,11 +22,28 @@ import (
 
 type contextKey string
 
-const ContextKeyNamespace = contextKey("namespace")
+const (
+	ContextKeyNamespace  = contextKey("namespace")
+	VerificationCounters = contextKey("verificationCounters")
+)
 
 // SetContextWithNamespace embeds namespace to the context.
 func SetContextWithNamespace(ctx context.Context, namespace string) context.Context {
 	return context.WithValue(ctx, ContextKeyNamespace, namespace)
+}
+
+// Initializes the verification counters map in the context, the map is heriarchical with the first key being the verifier name and the second key being image name, and last is the counter.
+func InitContextWithVerificationCounters(ctx context.Context) context.Context {
+	return context.WithValue(ctx, VerificationCounters, map[string]interface{}{})
+}
+
+// Retrieves the verification counters map from the context.
+func GetVerificationCountersFromContext(ctx context.Context) map[string]interface{} {
+	counters := ctx.Value(VerificationCounters)
+	if counters == nil {
+		return nil
+	}
+	return counters.(map[string]interface{})
 }
 
 // GetNamespace returns the embedded namespace from the context.

@@ -260,7 +260,7 @@ func TestCanVerify(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
-			result := cosignVerifier.CanVerify(context.Background(), ocispecs.ReferenceDescriptor{ArtifactType: tt.descArtifactType})
+			result := cosignVerifier.CanVerify(context.Background(), common.Reference{}, ocispecs.ReferenceDescriptor{ArtifactType: tt.descArtifactType})
 			if result != tt.want {
 				t.Errorf("CanVerify() = %v, want %v", result, tt.want)
 			}

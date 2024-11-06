@@ -45,7 +45,7 @@ func (s *TestVerifier) Type() string {
 	return "test-verifier"
 }
 
-func (s *TestVerifier) CanVerify(_ context.Context, _ ocispecs.ReferenceDescriptor) bool {
+func (s *TestVerifier) CanVerify(_ context.Context, _ common.Reference, _ ocispecs.ReferenceDescriptor) bool {
 	return true
 }
 

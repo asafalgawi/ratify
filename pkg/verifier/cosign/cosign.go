@@ -191,7 +191,7 @@ func (v *cosignVerifier) Type() string {
 }
 
 // CanVerify returns true if the referenceDescriptor's artifact type is in the list of artifact types supported by the verifier
-func (v *cosignVerifier) CanVerify(_ context.Context, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
+func (v *cosignVerifier) CanVerify(_ context.Context, _ common.Reference, referenceDescriptor ocispecs.ReferenceDescriptor) bool {
 	for _, at := range v.artifactTypes {
 		if at == "*" || at == referenceDescriptor.ArtifactType {
 			return true
